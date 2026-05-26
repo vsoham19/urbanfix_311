@@ -1145,58 +1145,103 @@ async def get_ward_streets(ward_name: str):
         center_lat = sum(all_lats) / len(all_lats)
         center_lon = sum(all_lons) / len(all_lons)
 
-    streets_spec = [
-        {"name": "MG Road", "d_lat": -0.005, "d_lon": -0.005, "len_lat": 0.010, "len_lon": 0.010, "risk_base": 75, "age": 42},
-        {"name": "Station Road", "d_lat": -0.005, "d_lon": 0.005, "len_lat": 0.010, "len_lon": -0.010, "risk_base": 58, "age": 28},
-        {"name": "Market Street", "d_lat": -0.006, "d_lon": 0.0, "len_lat": 0.012, "len_lon": 0.0, "risk_base": 42, "age": 19},
-        {"name": "Park Avenue", "d_lat": 0.0, "d_lon": -0.006, "len_lat": 0.0, "len_lon": 0.012, "risk_base": 24, "age": 12},
-        {"name": "Temple Road", "d_lat": -0.004, "d_lon": -0.004, "len_lat": 0.008, "len_lon": 0.008, "risk_base": 15, "age": 8}
-    ]
-
+    import math
+    
     streets = []
     complaints = []
     sensors = []
     
     seed_val = sum(ord(c) for c in ward_name)
+    r_gen = random.Random(seed_val)
     
-    for i, spec in enumerate(streets_spec):
-        s_seed = seed_val + i
-        r_gen = random.Random(s_seed)
+    def make_organic_line(start_pt, end_pt, num_pts, noise_level):
+        line = []
+        for step in range(num_pts):
+            t = step / (num_pts - 1)
+            lat = start_pt[0] + t * (end_pt[0] - start_pt[0])
+            lon = start_pt[1] + t * (end_pt[1] - start_pt[1])
+            if 0 < step < num_pts - 1:
+                lat += r_gen.uniform(-noise_level, noise_level)
+                lon += r_gen.uniform(-noise_level, noise_level)
+            line.append([round(lat, 6), round(lon, 6)])
+        return line
+
+    raw_specs = [
+        {"name": "Gandhi Marg", "type": "horizontal", "offset": 0.005, "risk": 78, "age": 36},
+        {"name": "Nehru Road", "type": "horizontal", "offset": 0.0, "risk": 52, "age": 22},
+        {"name": "Subhash Avenue", "type": "horizontal", "offset": -0.005, "risk": 28, "age": 14},
+        {"name": "Sardar Patel Marg", "type": "vertical", "offset": -0.005, "risk": 82, "age": 45},
+        {"name": "Tagore Path", "type": "vertical", "offset": 0.0, "risk": 41, "age": 18},
+        {"name": "Shastri Lane", "type": "vertical", "offset": 0.005, "risk": 15, "age": 9},
+        {"name": "120 Feet Ring Road Bypass", "type": "diagonal_sw_ne", "offset": 0.0, "risk": 64, "age": 31},
+        {"name": "Ashram Link Road", "type": "diagonal_nw_se", "offset": 0.0, "risk": 49, "age": 25},
+        {"name": "Heritage Ring Road", "type": "circle", "radius": 0.006, "risk": 71, "age": 39},
+        {"name": "Crescent Walkway", "type": "circle", "radius": 0.003, "risk": 20, "age": 7}
+    ]
+
+    for i, spec in enumerate(raw_specs):
+        s_seed = seed_val + i * 20
+        sr_gen = random.Random(s_seed)
         
-        start_lat = center_lat + spec["d_lat"]
-        start_lon = center_lon + spec["d_lon"]
-        end_lat = start_lat + spec["len_lat"]
-        end_lon = start_lon + spec["len_lon"]
-        polyline = [[start_lat, start_lon], [end_lat, end_lon]]
+        name = spec["name"]
+        risk_base = spec["risk"]
+        age = spec["age"]
         
-        risk_base = spec["risk_base"]
+        if spec["type"] == "horizontal":
+            start_pt = [center_lat + spec["offset"], center_lon - 0.008]
+            end_pt = [center_lat + spec["offset"], center_lon + 0.008]
+            polyline = make_organic_line(start_pt, end_pt, 6, 0.0006)
+        elif spec["type"] == "vertical":
+            start_pt = [center_lat - 0.008, center_lon + spec["offset"]]
+            end_pt = [center_lat + 0.008, center_lon + spec["offset"]]
+            polyline = make_organic_line(start_pt, end_pt, 6, 0.0006)
+        elif spec["type"] == "diagonal_sw_ne":
+            start_pt = [center_lat - 0.006, center_lon - 0.006]
+            end_pt = [center_lat + 0.006, center_lon + 0.006]
+            polyline = make_organic_line(start_pt, end_pt, 6, 0.0005)
+        elif spec["type"] == "diagonal_nw_se":
+            start_pt = [center_lat + 0.006, center_lon - 0.006]
+            end_pt = [center_lat - 0.006, center_lon + 0.006]
+            polyline = make_organic_line(start_pt, end_pt, 6, 0.0005)
+        elif spec["type"] == "circle":
+            polyline = []
+            r = spec["radius"]
+            num_circle_pts = 9
+            for k in range(num_circle_pts):
+                angle = (k / (num_circle_pts - 1)) * 2 * math.pi
+                lat = center_lat + r * math.cos(angle) + sr_gen.uniform(-0.0002, 0.0002)
+                lon = center_lon + r * math.sin(angle) + sr_gen.uniform(-0.0002, 0.0002)
+                polyline.append([round(lat, 6), round(lon, 6)])
+
         monthly_risk = [
-            max(5, min(95, int(risk_base * r_gen.uniform(0.6, 0.9)))),
-            max(5, min(95, int(risk_base * r_gen.uniform(0.7, 1.0)))),
-            max(5, min(95, int(risk_base * r_gen.uniform(0.8, 1.1)))),
-            max(5, min(95, int(risk_base * r_gen.uniform(0.9, 1.2)))),
+            max(5, min(95, int(risk_base * sr_gen.uniform(0.6, 0.9)))),
+            max(5, min(95, int(risk_base * sr_gen.uniform(0.7, 1.0)))),
+            max(5, min(95, int(risk_base * sr_gen.uniform(0.8, 1.1)))),
+            max(5, min(95, int(risk_base * sr_gen.uniform(0.9, 1.2)))),
             risk_base
         ]
         
         comp_count = max(0, int(risk_base / 8))
         
         streets.append({
-            "name": spec["name"],
+            "name": name,
             "polyline": polyline,
             "risk_score": risk_base,
             "risk_level": "critical" if risk_base > 70 else "warning" if risk_base > 40 else "normal",
             "complaint_count": comp_count,
             "category": "Sewer Blockage" if i % 2 == 0 else "Road Pothole" if i % 3 == 0 else "Water Contamination",
-            "infrastructure_age_years": spec["age"],
+            "infrastructure_age_years": age,
             "monthly_risk": monthly_risk
         })
         
         for j in range(comp_count):
-            c_seed = s_seed + j * 10
+            c_seed = s_seed + j * 15
             c_gen = random.Random(c_seed)
-            t = c_gen.uniform(0.2, 0.8)
-            c_lat = start_lat + t * spec["len_lat"]
-            c_lon = start_lon + t * spec["len_lon"]
+            pt_idx = c_gen.randint(1, len(polyline) - 2) if len(polyline) > 2 else 0
+            pt = polyline[pt_idx]
+            
+            c_lat = pt[0] + c_gen.uniform(-0.0004, 0.0004)
+            c_lon = pt[1] + c_gen.uniform(-0.0004, 0.0004)
             
             categories = ["Sewer & Drainage", "Roads & Potholes", "Water Supply", "Garbage & Waste"]
             severities = ["high", "medium", "low"]
