@@ -358,7 +358,8 @@ export default function Dashboard({
               {
                 headers: {
                   'Content-Type': 'application/x-www-form-urlencoded'
-                }
+                },
+                timeout: 5000 // 5-second fail-safe timeout
               }
             );
             
