@@ -17,6 +17,8 @@ const COMPLAINT_CATEGORIES = [
   "Roads & Potholes", "Water Supply", "Other"
 ];
 
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+
 export default function Review({ 
   quarantineRecords, 
   flaggedRecords, 
@@ -69,7 +71,7 @@ export default function Review({
         };
       }
 
-      await axios.post('http://127.0.0.1:8000/review/submit', payload);
+      await axios.post(`${API_BASE_URL}/review/submit`, payload);
       setEditingRecordId(null);
       if (fetchData) fetchData();
     } catch (err) {

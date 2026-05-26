@@ -5,6 +5,8 @@ import Dashboard from './components/Dashboard';
 import Upload from './components/Upload';
 import Review from './components/Review';
 
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [structuredRecords, setStructuredRecords] = useState([]);
@@ -19,11 +21,11 @@ export default function App() {
       if (showLoader) setIsLoading(true);
       
       const [structuredRes, quarantineRes, flaggedRes, reportsRes, iotSewerRes] = await Promise.all([
-            axios.get('https://urbanfix-311.onrender.com/records/structured'),
-            axios.get('https://urbanfix-311.onrender.com/records/quarantine'),
-            axios.get('https://urbanfix-311.onrender.com/records/flagged'),
-            axios.get('https://urbanfix-311.onrender.com/records/reports'),
-            axios.get('https://urbanfix-311.onrender.com/iot/sewer-readings')
+            axios.get(`${API_BASE_URL}/records/structured`),
+            axios.get(`${API_BASE_URL}/records/quarantine`),
+            axios.get(`${API_BASE_URL}/records/flagged`),
+            axios.get(`${API_BASE_URL}/records/reports`),
+            axios.get(`${API_BASE_URL}/iot/sewer-readings`)
             ]);
 
       setStructuredRecords(structuredRes.data);

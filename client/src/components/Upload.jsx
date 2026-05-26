@@ -6,6 +6,8 @@ import {
   MapPin, CheckCircle, RefreshCw, AlertTriangle, X, Download
 } from 'lucide-react';
 
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+
 export default function Upload({ onUploadSuccess }) {
   const [files, setFiles] = useState([]);
   const [numRows, setNumRows] = useState(50);
@@ -68,7 +70,7 @@ export default function Upload({ onUploadSuccess }) {
           const formData = new FormData();
           formData.append('file', files[0]);
 
-          const response = await axios.post('http://127.0.0.1:8000/upload/csv', formData, {
+          const response = await axios.post(`${API_BASE_URL}/upload/csv`, formData, {
             headers: {
               'Content-Type': 'multipart/form-data'
             }
@@ -82,7 +84,7 @@ export default function Upload({ onUploadSuccess }) {
           });
 
           const response = await axios.post(
-            `http://127.0.0.1:8000/upload/csv/merge?merge_option=${mergeOption}`,
+            `${API_BASE_URL}/upload/csv/merge?merge_option=${mergeOption}`,
             formData,
             {
               headers: {
@@ -104,7 +106,7 @@ export default function Upload({ onUploadSuccess }) {
   const handleGenerateMock = async () => {
     runProgressSimulation(async () => {
       try {
-        const response = await axios.post(`http://127.0.0.1:8000/upload/generate-mock?num_rows=${numRows}`);
+        const response = await axios.post(`${API_BASE_URL}/upload/generate-mock?num_rows=${numRows}`);
         setBatchResult(response.data);
         setIsProcessing(false);
         if (onUploadSuccess) onUploadSuccess();

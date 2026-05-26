@@ -162,6 +162,8 @@ function MapZoomListener({ onChange }) {
 }
 
 
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+
 export default function Dashboard({
   structuredRecords,
   quarantineRecords,
@@ -334,7 +336,7 @@ export default function Dashboard({
     setStreetLoading(true);
     setStreetError("");
     try {
-      const res = await axios.get(`http://127.0.0.1:8000/iot/ward-streets/${encodeURIComponent(wardName)}`);
+      const res = await axios.get(`${API_BASE_URL}/iot/ward-streets/${encodeURIComponent(wardName)}`);
       if (res.data && res.data.status === 'success') {
         const backendData = res.data;
         
@@ -417,7 +419,7 @@ export default function Dashboard({
         setOverviewLoading(true);
         setOverviewError("");
         try {
-          const res = await axios.get("http://127.0.0.1:8000/iot/wards-boundaries");
+          const res = await axios.get(`${API_BASE_URL}/iot/wards-boundaries`);
           if (res.data && res.data.wards) {
             setOverviewWards(res.data.wards);
           } else {
@@ -529,7 +531,7 @@ export default function Dashboard({
   const fetchPredictiveData = async (bandwidthVal = gwrBandwidth) => {
     setPredictiveLoading(true);
     try {
-      const runRes = await axios.get(`http://127.0.0.1:8000/predictive/run?bandwidth=${bandwidthVal}`);
+      const runRes = await axios.get(`${API_BASE_URL}/predictive/run?bandwidth=${bandwidthVal}`);
       setPredictiveData(runRes.data);
       
       // Auto-set selectedWard to first ward if not already set or invalid
@@ -542,7 +544,7 @@ export default function Dashboard({
 
       // Load AI briefing on demand if not present
       if (!aiBriefing) {
-        const insightRes = await axios.get("http://127.0.0.1:8000/predictive/insights");
+        const insightRes = await axios.get(`${API_BASE_URL}/predictive/insights`);
         setAiBriefing(insightRes.data.report);
       }
     } catch (err) {
@@ -652,7 +654,7 @@ export default function Dashboard({
     setIotChatLoading(true);
 
     try {
-      const res = await axios.post("http://127.0.0.1:8000/iot/chat", {
+      const res = await axios.post(`${API_BASE_URL}/iot/chat`, {
         mode,
         ward_a: mode === "compare" ? chatWardA : "",
         ward_b: mode === "compare" ? chatWardB : "",
