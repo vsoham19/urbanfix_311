@@ -19,12 +19,12 @@ export default function App() {
       if (showLoader) setIsLoading(true);
       
       const [structuredRes, quarantineRes, flaggedRes, reportsRes, iotSewerRes] = await Promise.all([
-        axios.get('http://localhost:8000/records/structured'),
-        axios.get('http://localhost:8000/records/quarantine'),
-        axios.get('http://localhost:8000/records/flagged'),
-        axios.get('http://localhost:8000/records/reports'),
-        axios.get('http://localhost:8000/iot/sewer-readings')
-      ]);
+            axios.get('https://urbanfix-311.onrender.com/records/structured'),
+            axios.get('https://urbanfix-311.onrender.com/records/quarantine'),
+            axios.get('https://urbanfix-311.onrender.com/records/flagged'),
+            axios.get('https://urbanfix-311.onrender.com/records/reports'),
+            axios.get('https://urbanfix-311.onrender.com/iot/sewer-readings')
+            ]);
 
       setStructuredRecords(structuredRes.data);
       setQuarantineRecords(quarantineRes.data);
