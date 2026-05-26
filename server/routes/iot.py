@@ -1146,11 +1146,11 @@ async def get_ward_streets(ward_name: str):
         center_lon = sum(all_lons) / len(all_lons)
 
     streets_spec = [
-        {"name": "MG Road", "d_lat": -0.002, "d_lon": -0.002, "len_lat": 0.004, "len_lon": 0.004, "risk_base": 75, "age": 42},
-        {"name": "Station Road", "d_lat": -0.002, "d_lon": 0.002, "len_lat": 0.004, "len_lon": -0.004, "risk_base": 58, "age": 28},
-        {"name": "Market Street", "d_lat": -0.003, "d_lon": 0.0, "len_lat": 0.006, "len_lon": 0.0, "risk_base": 42, "age": 19},
-        {"name": "Park Avenue", "d_lat": 0.0, "d_lon": -0.003, "len_lat": 0.0, "len_lon": 0.006, "risk_base": 24, "age": 12},
-        {"name": "Temple Road", "d_lat": -0.0015, "d_lon": -0.0015, "len_lat": 0.003, "len_lon": 0.003, "risk_base": 15, "age": 8}
+        {"name": "MG Road", "d_lat": -0.005, "d_lon": -0.005, "len_lat": 0.010, "len_lon": 0.010, "risk_base": 75, "age": 42},
+        {"name": "Station Road", "d_lat": -0.005, "d_lon": 0.005, "len_lat": 0.010, "len_lon": -0.010, "risk_base": 58, "age": 28},
+        {"name": "Market Street", "d_lat": -0.006, "d_lon": 0.0, "len_lat": 0.012, "len_lon": 0.0, "risk_base": 42, "age": 19},
+        {"name": "Park Avenue", "d_lat": 0.0, "d_lon": -0.006, "len_lat": 0.0, "len_lon": 0.012, "risk_base": 24, "age": 12},
+        {"name": "Temple Road", "d_lat": -0.004, "d_lon": -0.004, "len_lat": 0.008, "len_lon": 0.008, "risk_base": 15, "age": 8}
     ]
 
     streets = []

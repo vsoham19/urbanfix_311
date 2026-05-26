@@ -352,7 +352,15 @@ export default function Dashboard({
             const maxLng = centerLng + 0.007;
             
             const query = `[out:json][timeout:15];way["highway"~"primary|secondary|tertiary|residential"](${minLat},${minLng},${maxLat},${maxLng});out geom;`;
-            const overpassRes = await axios.post("https://overpass-api.de/api/interpreter", query);
+            const overpassRes = await axios.post(
+              "https://overpass-api.de/api/interpreter",
+              `data=${encodeURIComponent(query)}`,
+              {
+                headers: {
+                  'Content-Type': 'application/x-www-form-urlencoded'
+                }
+              }
+            );
             
             if (overpassRes.data && overpassRes.data.elements && overpassRes.data.elements.length > 0) {
               const sumChars = (str) => {
