@@ -5,7 +5,7 @@ import Dashboard from './components/Dashboard';
 import Upload from './components/Upload';
 import Review from './components/Review';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://urbanfix-311.onrender.com';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
