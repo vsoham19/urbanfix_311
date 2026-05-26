@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from faker import Faker
 import pandas as pd
 
-fake = Faker(['en_IN', 'gu_IN'])
+fake = Faker(['en_IN'])
 
 AHMEDABAD_WARDS = [
     "Navrangpura", "Vastrapur", "Satellite", "Naranpura", "Girdhar Nagar", 
