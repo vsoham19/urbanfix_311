@@ -1070,27 +1070,357 @@ async def get_wards_boundaries():
     }
 
 
+# Setup persistent cache directory that fallback-safely works on local/Render/Vercel
+OSM_CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "osm_cache")
+try:
+    os.makedirs(OSM_CACHE_DIR, exist_ok=True)
+except Exception:
+    # Ephemeral serverless fallback
+    OSM_CACHE_DIR = "/tmp/osm_cache"
+    try:
+        os.makedirs(OSM_CACHE_DIR, exist_ok=True)
+    except Exception:
+        OSM_CACHE_DIR = None
+
+# In-memory cache for OSM street data per ward (persists across requests while server is running)
+_osm_street_cache: Dict[str, list] = {}
+
+
+def _is_point_in_polygon(x: float, y: float, poly: list) -> bool:
+    """Ray-casting algorithm to check if point (lat=x, lon=y) is inside a polygon of [lat, lon] points."""
+    num = len(poly)
+    j = num - 1
+    c = False
+    for i in range(num):
+        if ((poly[i][1] > y) != (poly[j][1] > y)) and \
+                (x < (poly[j][0] - poly[i][0]) * (y - poly[i][1]) / (poly[j][1] - poly[i][1]) + poly[i][0]):
+            c = not c
+        j = i
+    return c
+
+
+def _generate_synthetic_streets(ward_name: str, polygons: list, center_lat: float, center_lon: float, bbox: dict) -> list:
+    """
+    Generates a highly realistic, organic synthetic street network that is bounded
+    precisely by the ward's KML polygon boundary. Connects random nodes inside the
+    polygon using a distance-limited proximity network to mimic real city road expansion.
+    """
+    import random
+    import math
+
+    seed_val = sum(ord(c) for c in ward_name)
+    r = random.Random(seed_val)
+
+    # 1. Generate random nodes inside the actual ward boundary polygons
+    nodes = []
+    # Always include the center point as the seed node
+    nodes.append([center_lat, center_lon])
+
+    min_lat = bbox["min_lat"]
+    max_lat = bbox["max_lat"]
+    min_lng = bbox["min_lng"]
+    max_lng = bbox["max_lng"]
+
+    # Try to generate up to 25 nodes inside the polygon(s)
+    attempts = 0
+    max_attempts = 1500
+    target_nodes = 25
+
+    while len(nodes) < target_nodes and attempts < max_attempts:
+        attempts += 1
+        lat = r.uniform(min_lat, max_lat)
+        lng = r.uniform(min_lng, max_lng)
+
+        # Check if point is inside any of the polygons of the ward
+        inside = False
+        if not polygons:
+            inside = True # No polygon boundaries, just keep it
+        else:
+            for poly in polygons:
+                if _is_point_in_polygon(lat, lng, poly):
+                    inside = True
+                    break
+        
+        if inside:
+            # Prevent nodes from being too close to each other
+            too_close = False
+            for existing in nodes:
+                dist = math.hypot(lat - existing[0], lng - existing[1])
+                if dist < 0.0012:  # roughly 120-150 meters
+                    too_close = True
+                    break
+            if not too_close:
+                nodes.append([lat, lng])
+
+    # If we failed to generate enough nodes inside the boundary, fallback to box sampling
+    if len(nodes) < 6:
+        for _ in range(12):
+            lat = r.uniform(center_lat - 0.006, center_lat + 0.006)
+            lng = r.uniform(center_lon - 0.006, center_lon + 0.006)
+            nodes.append([lat, lng])
+
+    # 2. Build road connections (edges) between nodes
+    # For each node, connect to its nearest 2-3 neighbors within a certain max distance threshold
+    edges = set()
+    num_nodes = len(nodes)
+    max_edge_dist = 0.005  # Max road length segment (approx 500m)
+
+    for i in range(num_nodes):
+        dists = []
+        for j in range(num_nodes):
+            if i == j:
+                continue
+            dist = math.hypot(nodes[i][0] - nodes[j][0], nodes[i][1] - nodes[j][1])
+            if dist < max_edge_dist:
+                dists.append((dist, j))
+        
+        # Connect to 2-3 closest neighbors
+        dists.sort()
+        num_connections = r.choice([2, 3])
+        for _, neighbor_idx in dists[:num_connections]:
+            # Sort index tuple to prevent duplicate bi-directional edges
+            edge = (min(i, neighbor_idx), max(i, neighbor_idx))
+            edges.add(edge)
+
+    # 3. Create polylines from edges with organic curvature/wobble
+    indian_prefixes = [
+        "Mahatma Gandhi", "Subhash", "Sardar Patel", "Nehru", "Tagore", "Shastri",
+        "Vivekananda", "Premchand", "Lal Bahadur", "Vikram Sarabhai", "Bhagat Singh",
+        "Rani Laxmibai", "Ambedkar", "Kalam", "Pratap", "Shivaji", "Tilak", "Gokhale",
+        "Bose", "Radhakrishnan", "Market", "Temple", "Lake View", "Park", "Hospital",
+        "School", "Civil Lines", "Main Bazaar", "Industrial", "Heritage", "Crescent",
+        "Circular", "Green Valley", "Royal", "Cross", "Station", "Vasant", "Kavita",
+        "Sanskrit", "Panchayat", "Ganga", "Yamuna", "Narmada"
+    ]
+    indian_suffixes = ["Road", "Street", "Marg", "Avenue", "Lane", "Path", "Chowk", "Nagar Road", "Bypass", "Link Road"]
+    categories = ["Sewer Blockage", "Road Pothole", "Drainage Overflow", "Water Contamination", "Pipeline Leak"]
+
+    streets = []
+    edges_list = list(edges)
+    
+    for idx, (i, j) in enumerate(edges_list):
+        n1 = nodes[i]
+        n2 = nodes[j]
+
+        # Generate 4-6 intermediate points to make the street curved/organic
+        num_pts = r.randint(4, 6)
+        polyline = []
+        for step in range(num_pts):
+            t = step / (num_pts - 1)
+            lat = n1[0] + t * (n2[0] - n1[0])
+            lon = n1[1] + t * (n2[1] - n1[1])
+            
+            # Wobble internal points slightly to create organic road bends
+            if 0 < step < num_pts - 1:
+                wobble_lat = r.uniform(-0.00015, 0.00015)
+                wobble_lon = r.uniform(-0.00015, 0.00015)
+                lat += wobble_lat
+                lon += wobble_lon
+            
+            polyline.append([round(lat, 6), round(lon, 6)])
+
+        # Generate a unique deterministic name
+        name_seed = seed_val + idx * 37
+        sr = random.Random(name_seed)
+        p_name = sr.choice(indian_prefixes)
+        s_name = sr.choice(indian_suffixes)
+        name = f"{p_name} {s_name}"
+
+        # Deterministic risk and history
+        risk_base = 15 + (name_seed % 75)
+        monthly_risk = [
+            max(5, min(95, int(risk_base * sr.uniform(0.6, 0.85)))),
+            max(5, min(95, int(risk_base * sr.uniform(0.7, 0.9)))),
+            max(5, min(95, int(risk_base * sr.uniform(0.75, 0.95)))),
+            max(5, min(95, int(risk_base * sr.uniform(0.85, 1.05)))),
+            risk_base
+        ]
+
+        streets.append({
+            "name": name,
+            "polyline": polyline,
+            "risk_score": risk_base,
+            "risk_level": "critical" if risk_base > 70 else "warning" if risk_base > 40 else "normal",
+            "complaint_count": max(0, risk_base // 12),
+            "category": categories[idx % len(categories)],
+            "infrastructure_age_years": 5 + (name_seed % 45),
+            "monthly_risk": monthly_risk
+        })
+
+    # Sort streets by name/risk and cap to 150 for performance
+    streets.sort(key=lambda s: s["name"])
+    return streets[:150]
+
+
+def _fetch_osm_streets(center_lat: float, center_lon: float, bbox: dict, ward_name: str) -> list:
+    """
+    Fetch real street geometries from OpenStreetMap Overpass API server-side.
+    First checks persistent disk cache. If not found, queries multiple public Overpass API mirrors
+    in sequence with retries to avoid rate limits and timeouts, caching the results to disk.
+    Returns a list of street dicts, or empty list on failure.
+    """
+    import urllib.request
+    import urllib.parse
+    import json
+    import random
+
+    # 1. Try to load from persistent disk cache
+    cache_key = ward_name.lower().replace(" ", "").replace("-", "").replace(".", "").replace("y", "i").replace("w", "v")
+    if OSM_CACHE_DIR:
+        disk_cache_file = os.path.join(OSM_CACHE_DIR, f"{cache_key}.json")
+        if os.path.exists(disk_cache_file):
+            try:
+                with open(disk_cache_file, "r", encoding="utf-8") as f:
+                    cached_data = json.load(f)
+                if isinstance(cached_data, list) and len(cached_data) > 0:
+                    print(f"[OSM] Disk cache hit: Loaded {len(cached_data)} streets for '{ward_name}'")
+                    return cached_data
+            except Exception as e:
+                print(f"[OSM] Error reading disk cache for {ward_name}: {e}")
+
+    # 2. Setup multiple Overpass API mirrors to try in sequence
+    OVERPASS_SERVERS = [
+        "https://overpass-api.de/api/interpreter",
+        "https://lz4.overpass-api.de/api/interpreter",
+        "https://z.overpass-api.de/api/interpreter",
+        "https://overpass.kumi.systems/api/interpreter",
+        "https://overpass.nchc.org.tw/api/interpreter"
+    ]
+
+    min_lat = bbox["min_lat"]
+    max_lat = bbox["max_lat"]
+    min_lng = bbox["min_lng"]
+    max_lng = bbox["max_lng"]
+
+    query = (
+        f'[out:json][timeout:25];'
+        f'way["highway"~"primary|secondary|tertiary|residential|unclassified|living_street"]'
+        f'({min_lat},{min_lng},{max_lat},{max_lng});'
+        f'out geom;'
+    )
+    encoded_data = urllib.parse.urlencode({"data": query}).encode("utf-8")
+
+    data = None
+    last_error = ""
+
+    for idx, server_url in enumerate(OVERPASS_SERVERS):
+        try:
+            print(f"[OSM] Attempting Overpass fetch for {ward_name} from {server_url}...")
+            req = urllib.request.Request(
+                server_url,
+                data=encoded_data,
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "User-Agent": "UrbanFix311/1.0"
+                }
+            )
+            # Use a slightly shorter timeout for backup servers
+            timeout_sec = 18 if idx == 0 else 12
+            with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
+                raw = resp.read().decode("utf-8")
+                data = json.loads(raw)
+            print(f"[OSM] Success! Fetched from {server_url}")
+            break
+        except Exception as e:
+            last_error = str(e)
+            print(f"[OSM] Overpass error from {server_url}: {e}")
+
+    if not data:
+        print(f"[OSM] All Overpass API query servers failed for {ward_name}. Last error: {last_error}")
+        return []
+
+    try:
+        elements = data.get("elements", [])
+        ways = [el for el in elements if el.get("type") == "way" and el.get("geometry") and len(el["geometry"]) >= 2]
+
+        if not ways:
+            return []
+
+        # Prioritize: named streets first, then by road class importance, cap at 150
+        road_priority = {"primary": 0, "secondary": 1, "tertiary": 2, "unclassified": 3, "living_street": 4, "residential": 5}
+        def sort_key(w):
+            tags = w.get("tags") or {}
+            has_name = 0 if tags.get("name") else 1
+            hw_rank = road_priority.get(tags.get("highway", "residential"), 5)
+            return (has_name, hw_rank)
+
+        ways.sort(key=sort_key)
+        ways = ways[:150]  # Cap at 150 streets for smooth map rendering
+
+        seed_val = sum(ord(c) for c in ward_name)
+        categories = ["Sewer Blockage", "Road Pothole", "Drainage Overflow", "Water Contamination", "Pipeline Leak"]
+
+        streets = []
+        for index, way in enumerate(ways):
+            name = (way.get("tags") or {}).get("name", f"{ward_name} Road {index + 1}")
+            polyline = [[pt["lat"], pt["lon"]] for pt in way["geometry"]]
+
+            # Deterministic risk based on street name
+            name_seed = seed_val + sum(ord(c) for c in name) + index
+            sr = random.Random(name_seed)
+            risk_base = 15 + (name_seed % 75)
+            highway_type = (way.get("tags") or {}).get("highway", "residential")
+            if highway_type in ("primary", "secondary"):
+                risk_base = min(95, risk_base + 15)
+
+            monthly_risk = [
+                max(5, min(95, int(risk_base * sr.uniform(0.6, 0.85)))),
+                max(5, min(95, int(risk_base * sr.uniform(0.7, 0.9)))),
+                max(5, min(95, int(risk_base * sr.uniform(0.75, 0.95)))),
+                max(5, min(95, int(risk_base * sr.uniform(0.85, 1.05)))),
+                risk_base
+            ]
+
+            streets.append({
+                "name": name,
+                "polyline": polyline,
+                "risk_score": risk_base,
+                "risk_level": "critical" if risk_base > 70 else "warning" if risk_base > 40 else "normal",
+                "complaint_count": max(0, risk_base // 12),
+                "category": categories[index % len(categories)],
+                "infrastructure_age_years": 5 + (name_seed % 45),
+                "monthly_risk": monthly_risk
+            })
+
+        # Save to persistent disk cache
+        if OSM_CACHE_DIR and streets:
+            disk_cache_file = os.path.join(OSM_CACHE_DIR, f"{cache_key}.json")
+            try:
+                with open(disk_cache_file, "w", encoding="utf-8") as f:
+                    json.dump(streets, f, ensure_ascii=False, indent=2)
+                print(f"[OSM] Saved {len(streets)} streets to persistent disk cache for '{ward_name}'")
+            except Exception as e:
+                print(f"[OSM] Error saving disk cache for {ward_name}: {e}")
+
+        return streets
+
+    except Exception as e:
+        print(f"[OSM] Error parsing/saving OSM streets for {ward_name}: {e}")
+        return []
+
+
 @router.get("/ward-streets/{ward_name}")
 async def get_ward_streets(ward_name: str):
     """
-    Generates high-fidelity mock street-level information (polylines, complaints, IoT sensors)
-    spatially bounded by the KML boundaries of the selected ward.
+    Returns street-level GIS data for a ward. Fetches real road geometries from
+    OpenStreetMap server-side (cached), with organic fallback if OSM is unavailable.
     """
     import xml.etree.ElementTree as ET
     import random
-    
+    import math
+
     current_dir = os.path.dirname(os.path.abspath(__file__))
     server_dir = os.path.dirname(current_dir)
     root_dir = os.path.dirname(server_dir)
-    
+
     # Try server directory first (for Render cloud environments), fallback to root parent directory
     kml_path = os.path.join(server_dir, "ahmedabad_wards_map_2024.kml")
     if not os.path.exists(kml_path):
         kml_path = os.path.join(root_dir, "ahmedabad_wards_map_2024.kml")
-    
+
     if not os.path.exists(kml_path):
         raise HTTPException(status_code=404, detail="KML map file not found.")
-        
+
     try:
         ns = {'kml': 'http://www.opengis.net/kml/2.2'}
         tree = ET.parse(kml_path)
@@ -1117,7 +1447,7 @@ async def get_ward_streets(ward_name: str):
                 break
         if not kml_name:
             continue
-            
+
         if normalize_name(kml_name) == target_norm:
             actual_kml_name = kml_name
             coord_nodes = pm.findall('.//kml:coordinates', ns)
@@ -1137,141 +1467,96 @@ async def get_ward_streets(ward_name: str):
                     polygons.append(pts)
             break
 
+    # Compute center and bounding box from KML polygon
     if not polygons:
         center_lat, center_lon = 23.03, 72.62
+        bbox = {"min_lat": center_lat - 0.01, "max_lat": center_lat + 0.01,
+                "min_lng": center_lon - 0.01, "max_lng": center_lon + 0.01}
     else:
         all_lats = [pt[0] for poly in polygons for pt in poly]
         all_lons = [pt[1] for poly in polygons for pt in poly]
         center_lat = sum(all_lats) / len(all_lats)
         center_lon = sum(all_lons) / len(all_lons)
+        bbox = {
+            "min_lat": min(all_lats),
+            "max_lat": max(all_lats),
+            "min_lng": min(all_lons),
+            "max_lng": max(all_lons)
+        }
 
-    import math
-    
-    streets = []
+    # ---- Fetch real OSM streets (server-side, cached) ----
+    cache_key = normalize_name(ward_name)
+    osm_streets = _osm_street_cache.get(cache_key)
+
+    if osm_streets is None:
+        # Not in cache — fetch from Overpass API server-side
+        osm_streets = _fetch_osm_streets(center_lat, center_lon, bbox, ward_name)
+        _osm_street_cache[cache_key] = osm_streets  # Cache even if empty (avoids re-fetching failures)
+        if osm_streets:
+            print(f"[OSM] Cached {len(osm_streets)} real streets for ward '{ward_name}'")
+        else:
+            print(f"[OSM] No streets fetched for '{ward_name}', will use fallback")
+    else:
+        if osm_streets:
+            print(f"[OSM] Cache hit: {len(osm_streets)} streets for '{ward_name}'")
+
+    # Use OSM streets if available, otherwise generate organic fallback
+    if osm_streets:
+        streets = osm_streets
+    else:
+        # ---- Organic fallback street network based on actual ward KML boundary ----
+        streets = _generate_synthetic_streets(ward_name, polygons, center_lat, center_lon, bbox)
+
+    # ---- Generate complaints along streets ----
     complaints = []
-    sensors = []
-    
     seed_val = sum(ord(c) for c in ward_name)
-    r_gen = random.Random(seed_val)
-    
-    def make_organic_line(start_pt, end_pt, num_pts, noise_level):
-        line = []
-        for step in range(num_pts):
-            t = step / (num_pts - 1)
-            lat = start_pt[0] + t * (end_pt[0] - start_pt[0])
-            lon = start_pt[1] + t * (end_pt[1] - start_pt[1])
-            if 0 < step < num_pts - 1:
-                lat += r_gen.uniform(-noise_level, noise_level)
-                lon += r_gen.uniform(-noise_level, noise_level)
-            line.append([round(lat, 6), round(lon, 6)])
-        return line
 
-    raw_specs = [
-        {"name": "Gandhi Marg", "type": "horizontal", "offset": 0.005, "risk": 78, "age": 36},
-        {"name": "Nehru Road", "type": "horizontal", "offset": 0.0, "risk": 52, "age": 22},
-        {"name": "Subhash Avenue", "type": "horizontal", "offset": -0.005, "risk": 28, "age": 14},
-        {"name": "Sardar Patel Marg", "type": "vertical", "offset": -0.005, "risk": 82, "age": 45},
-        {"name": "Tagore Path", "type": "vertical", "offset": 0.0, "risk": 41, "age": 18},
-        {"name": "Shastri Lane", "type": "vertical", "offset": 0.005, "risk": 15, "age": 9},
-        {"name": "120 Feet Ring Road Bypass", "type": "diagonal_sw_ne", "offset": 0.0, "risk": 64, "age": 31},
-        {"name": "Ashram Link Road", "type": "diagonal_nw_se", "offset": 0.0, "risk": 49, "age": 25},
-        {"name": "Heritage Ring Road", "type": "circle", "radius": 0.006, "risk": 71, "age": 39},
-        {"name": "Crescent Walkway", "type": "circle", "radius": 0.003, "risk": 20, "age": 7}
-    ]
-
-    for i, spec in enumerate(raw_specs):
-        s_seed = seed_val + i * 20
-        sr_gen = random.Random(s_seed)
-        
-        name = spec["name"]
-        risk_base = spec["risk"]
-        age = spec["age"]
-        
-        if spec["type"] == "horizontal":
-            start_pt = [center_lat + spec["offset"], center_lon - 0.008]
-            end_pt = [center_lat + spec["offset"], center_lon + 0.008]
-            polyline = make_organic_line(start_pt, end_pt, 6, 0.0006)
-        elif spec["type"] == "vertical":
-            start_pt = [center_lat - 0.008, center_lon + spec["offset"]]
-            end_pt = [center_lat + 0.008, center_lon + spec["offset"]]
-            polyline = make_organic_line(start_pt, end_pt, 6, 0.0006)
-        elif spec["type"] == "diagonal_sw_ne":
-            start_pt = [center_lat - 0.006, center_lon - 0.006]
-            end_pt = [center_lat + 0.006, center_lon + 0.006]
-            polyline = make_organic_line(start_pt, end_pt, 6, 0.0005)
-        elif spec["type"] == "diagonal_nw_se":
-            start_pt = [center_lat + 0.006, center_lon - 0.006]
-            end_pt = [center_lat - 0.006, center_lon + 0.006]
-            polyline = make_organic_line(start_pt, end_pt, 6, 0.0005)
-        elif spec["type"] == "circle":
-            polyline = []
-            r = spec["radius"]
-            num_circle_pts = 9
-            for k in range(num_circle_pts):
-                angle = (k / (num_circle_pts - 1)) * 2 * math.pi
-                lat = center_lat + r * math.cos(angle) + sr_gen.uniform(-0.0002, 0.0002)
-                lon = center_lon + r * math.sin(angle) + sr_gen.uniform(-0.0002, 0.0002)
-                polyline.append([round(lat, 6), round(lon, 6)])
-
-        monthly_risk = [
-            max(5, min(95, int(risk_base * sr_gen.uniform(0.6, 0.9)))),
-            max(5, min(95, int(risk_base * sr_gen.uniform(0.7, 1.0)))),
-            max(5, min(95, int(risk_base * sr_gen.uniform(0.8, 1.1)))),
-            max(5, min(95, int(risk_base * sr_gen.uniform(0.9, 1.2)))),
-            risk_base
+    categories = ["Sewer & Drainage", "Roads & Potholes", "Water Supply", "Garbage & Waste"]
+    severities = ["high", "medium", "low"]
+    descs = {
+        "Sewer & Drainage": [
+            "Surcharging sewer manhole pouring blackwater onto pavement.",
+            "Sewer blockage in main lateral causing backflow into properties.",
+            "Strong hydrogen sulfide odor and slow drainage on main street line."
+        ],
+        "Roads & Potholes": [
+            "Deep structural pothole posing immediate vehicle damage hazard.",
+            "Asphalt cracking and depression due to sub-surface pipe erosion.",
+            "Road cave-in around drainage inspection chamber."
+        ],
+        "Water Supply": [
+            "Contaminated rusty water supply coming from residential links.",
+            "Low water pressure and muddy color in distribution main.",
+            "Major water pipeline leak spraying water onto main roadway."
+        ],
+        "Garbage & Waste": [
+            "Uncollected garbage pile attracting vermin on street corner.",
+            "Overflowing waste bin blocking pedestrian pathway.",
+            "Illegal dumping of construction debris along street shoulder."
         ]
-        
-        comp_count = max(0, int(risk_base / 8))
-        
-        streets.append({
-            "name": name,
-            "polyline": polyline,
-            "risk_score": risk_base,
-            "risk_level": "critical" if risk_base > 70 else "warning" if risk_base > 40 else "normal",
-            "complaint_count": comp_count,
-            "category": "Sewer Blockage" if i % 2 == 0 else "Road Pothole" if i % 3 == 0 else "Water Contamination",
-            "infrastructure_age_years": age,
-            "monthly_risk": monthly_risk
-        })
-        
+    }
+
+    MAX_COMPLAINTS = 25  # Cap total complaints per ward for clean map rendering
+    for i, street in enumerate(streets):
+        if len(complaints) >= MAX_COMPLAINTS:
+            break
+        comp_count = min(street.get("complaint_count", max(0, street["risk_score"] // 12)), 3)  # Max 3 per street
+        polyline = street["polyline"]
         for j in range(comp_count):
-            c_seed = s_seed + j * 15
+            if len(complaints) >= MAX_COMPLAINTS:
+                break
+            c_seed = seed_val + i * 20 + j * 15
             c_gen = random.Random(c_seed)
-            pt_idx = c_gen.randint(1, len(polyline) - 2) if len(polyline) > 2 else 0
+            pt_idx = c_gen.randint(0, len(polyline) - 1)
             pt = polyline[pt_idx]
-            
+
             c_lat = pt[0] + c_gen.uniform(-0.0004, 0.0004)
             c_lon = pt[1] + c_gen.uniform(-0.0004, 0.0004)
-            
-            categories = ["Sewer & Drainage", "Roads & Potholes", "Water Supply", "Garbage & Waste"]
-            severities = ["high", "medium", "low"]
+
             c_cat = categories[(i + j) % len(categories)]
             c_sev = severities[j % len(severities)]
-            
-            descs = {
-                "Sewer & Drainage": [
-                    "Surcharging sewer manhole pouring blackwater onto pavement.",
-                    "Sewer blockage in main lateral causing backflow into properties.",
-                    "Strong hydrogen sulfide odor and slow drainage on main street line."
-                ],
-                "Roads & Potholes": [
-                    "Deep structural pothole posing immediate vehicle damage hazard.",
-                    "Asphalt cracking and depression due to sub-surface pipe erosion.",
-                    "Road cave-in around drainage inspection chamber."
-                ],
-                "Water Supply": [
-                    "Contaminated rusty water supply coming from residential links.",
-                    "Low water pressure and muddy color in distribution main.",
-                    "Major water pipeline leak spraying water onto main roadway."
-                ],
-                "Garbage & Waste": [
-                    "Uncollected garbage pile attracting vermin on street corner.",
-                    "Overflowing waste bin blocking pedestrian pathway.",
-                    "Illegal dumping of construction debris along street shoulder."
-                ]
-            }
             desc = c_gen.choice(descs.get(c_cat, ["General civic maintenance issue reported."]))
-            
+
             complaints.append({
                 "id": f"311-{ward_name[:3].upper()}-{i}{j}",
                 "lat": round(c_lat, 6),
@@ -1279,17 +1564,19 @@ async def get_ward_streets(ward_name: str):
                 "category": c_cat,
                 "severity": c_sev,
                 "description": desc,
-                "date_filed": f"2026-05-{10+j}"
+                "date_filed": f"2026-05-{10 + (j % 20)}"
             })
 
+    # ---- Generate IoT sensors scattered across the ward ----
+    sensors = []
     sensor_names = ["DRN-" + ward_name[:3].upper() + "-01", "DRN-" + ward_name[:3].upper() + "-02"]
     for i, s_name in enumerate(sensor_names):
         s_seed = seed_val + i * 50
         s_gen = random.Random(s_seed)
-        
+
         s_lat = center_lat + s_gen.uniform(-0.0015, 0.0015)
         s_lon = center_lon + s_gen.uniform(-0.0015, 0.0015)
-        
+
         sensors.append({
             "device_id": s_name,
             "lat": round(s_lat, 6),
@@ -1309,5 +1596,6 @@ async def get_ward_streets(ward_name: str):
         "complaints": complaints,
         "sensors": sensors
     }
+
 
 

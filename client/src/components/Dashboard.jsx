@@ -338,76 +338,7 @@ export default function Dashboard({
     try {
       const res = await axios.get(`${API_BASE_URL}/iot/ward-streets/${encodeURIComponent(wardName)}`);
       if (res.data && res.data.status === 'success') {
-        const backendData = res.data;
-        
-        // Dynamically fetch actual street polylines from OpenStreetMap Overpass API using bounding box
-        try {
-          if (backendData.center) {
-            const centerLat = backendData.center[0];
-            const centerLng = backendData.center[1];
-            // Calculate a 0.007 degree bounding box around the ward center
-            const minLat = centerLat - 0.007;
-            const maxLat = centerLat + 0.007;
-            const minLng = centerLng - 0.007;
-            const maxLng = centerLng + 0.007;
-            
-            const query = `[out:json][timeout:15];way["highway"~"primary|secondary|tertiary|residential"](${minLat},${minLng},${maxLat},${maxLng});out geom;`;
-            const overpassRes = await axios.post(
-              "https://overpass-api.de/api/interpreter",
-              `data=${encodeURIComponent(query)}`,
-              {
-                headers: {
-                  'Content-Type': 'application/x-www-form-urlencoded'
-                },
-                timeout: 5000 // 5-second fail-safe timeout
-              }
-            );
-            
-            if (overpassRes.data && overpassRes.data.elements && overpassRes.data.elements.length > 0) {
-              const sumChars = (str) => {
-                let sum = 0;
-                for (let k = 0; k < str.length; k++) sum += str.charCodeAt(k);
-                return sum;
-              };
-              
-              const realStreets = overpassRes.data.elements
-                .filter(el => el.type === "way" && el.geometry && el.geometry.length >= 2)
-                .map((el, idx) => {
-                  const streetName = el.tags?.name || `${wardName} Sector Road ${idx + 1}`;
-                  const polyline = el.geometry.map(pt => [pt.lat, pt.lon]);
-                  const seed = sumChars(streetName);
-                  const risk_base = 15 + (seed % 75); // 15 to 90
-                  const compCount = Math.max(0, Math.floor(risk_base / 12));
-                  
-                  return {
-                    name: streetName,
-                    polyline: polyline,
-                    risk_score: risk_base,
-                    risk_level: risk_base > 70 ? "critical" : risk_base > 40 ? "warning" : "normal",
-                    complaint_count: compCount,
-                    category: el.tags?.highway === "primary" ? "Sewer Blockage" : "Road Pothole",
-                    infrastructure_age_years: 5 + (seed % 45),
-                    monthly_risk: [
-                      Math.max(5, Math.min(95, Math.floor(risk_base * 0.7))),
-                      Math.max(5, Math.min(95, Math.floor(risk_base * 0.8))),
-                      Math.max(5, Math.min(95, Math.floor(risk_base * 0.9))),
-                      Math.max(5, Math.min(95, Math.floor(risk_base * 0.95))),
-                      risk_base
-                    ]
-                  };
-                });
-              
-              if (realStreets.length > 0) {
-                backendData.streets = realStreets;
-                console.log(`Loaded ${realStreets.length} real streets from OSM successfully!`);
-              }
-            }
-          }
-        } catch (osmErr) {
-          console.warn("OSM Overpass query failed. Using local high-fidelity geometry:", osmErr);
-        }
-        
-        setStreetData(backendData);
+        setStreetData(res.data);
       } else {
         setStreetError("Failed to load street level analytics.");
       }
