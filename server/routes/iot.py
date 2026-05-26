@@ -883,7 +883,11 @@ async def get_wards_boundaries():
     current_dir = os.path.dirname(os.path.abspath(__file__))
     server_dir = os.path.dirname(current_dir)
     root_dir = os.path.dirname(server_dir)
-    kml_path = os.path.join(root_dir, "ahmedabad_wards_map_2024.kml")
+    
+    # Try server directory first (for Render cloud environments), fallback to root parent directory
+    kml_path = os.path.join(server_dir, "ahmedabad_wards_map_2024.kml")
+    if not os.path.exists(kml_path):
+        kml_path = os.path.join(root_dir, "ahmedabad_wards_map_2024.kml")
     
     if not os.path.exists(kml_path):
         raise HTTPException(status_code=404, detail=f"KML map file not found at {kml_path}")
@@ -1078,7 +1082,11 @@ async def get_ward_streets(ward_name: str):
     current_dir = os.path.dirname(os.path.abspath(__file__))
     server_dir = os.path.dirname(current_dir)
     root_dir = os.path.dirname(server_dir)
-    kml_path = os.path.join(root_dir, "ahmedabad_wards_map_2024.kml")
+    
+    # Try server directory first (for Render cloud environments), fallback to root parent directory
+    kml_path = os.path.join(server_dir, "ahmedabad_wards_map_2024.kml")
+    if not os.path.exists(kml_path):
+        kml_path = os.path.join(root_dir, "ahmedabad_wards_map_2024.kml")
     
     if not os.path.exists(kml_path):
         raise HTTPException(status_code=404, detail="KML map file not found.")
